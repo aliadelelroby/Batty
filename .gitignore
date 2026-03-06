@@ -1,0 +1,25 @@
+# Build
+.build/
+*.o
+*.d
+
+# Xcode / SPM derived data
+.swiftpm/
+*.xcodeproj/
+xcuserdata/
+DerivedData/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Temp / editor
+*.swp
+*.orig
+.env
+
+# App bundle (built output — not tracked)
+*.app
+
+# Battery-Toolkit reference clone (not part of this project)
+Battery-Toolkit/
