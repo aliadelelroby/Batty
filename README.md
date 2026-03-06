@@ -24,10 +24,10 @@ All of this runs with no background daemon, no Apple Developer account, and no c
 
 Batty writes Apple SMC keys directly using a bundled `smc` binary with passwordless `sudo`. A one-time admin password is required during install to write `/etc/sudoers.d/batty`. After that, no further prompts ever appear.
 
-| SMC key | Type | OFF (limit active) | ON (normal) | Purpose |
-|---------|------|--------------------|-------------|---------|
-| `CHTE`  | ui32 | `01 00 00 00`      | `00 00 00 00` | Disable/enable charging |
-| `CHIE`  | hex_ | `08`               | `00`          | Disable/enable adapter (force discharge) |
+| SMC key | Type  | OFF (limit active) | ON (normal)   | Purpose                                  |
+| ------- | ----- | ------------------ | ------------- | ---------------------------------------- |
+| `CHTE`  | ui32  | `01 00 00 00`      | `00 00 00 00` | Disable/enable charging                  |
+| `CHIE`  | hex\_ | `08`               | `00`          | Disable/enable adapter (force discharge) |
 
 Enforcement fires on every 1% battery change via `notify_register_dispatch("com.apple.system.powersources.percent")` — no polling.
 
@@ -53,6 +53,7 @@ bash install.sh
 ```
 
 The installer will:
+
 1. Kill any running instance and wipe the previous install
 2. Build a release binary with Swift Package Manager
 3. Copy the app bundle to `/Applications/Batty.app`
