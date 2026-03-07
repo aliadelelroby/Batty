@@ -27,6 +27,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             Task { @MainActor in self?.updateMenuBarIcon() }
         }
+        // Show onboarding on first run (sudoers not yet installed)
+        if !ChargeLimitManager.shared.isSetupComplete {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                OnboardingWindowController.shared.show()
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -137,7 +143,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover?.contentViewController = NSHostingController(rootView: contentView)
     }
 
-    // MARK: - Update Timer (every 15s for snappier menu bar)
+    // MARK: - Update Timer
+    // 60-second heartbeat — only to catch drift/edge cases.
+    // Real-time updates are driven by IOPSNotificationCreateRunLoopSource (plug/unplug/% change).
     private func startUpdateTimer() {
         guard updateTimer == nil else { return }   // don't double-schedule
         wasCharging = batteryMonitor.isCharging
@@ -145,13 +153,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateMenuBarIcon()
         checkThresholdNotifications()
 
-        updateTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.batteryMonitor.refresh()
                 self?.updateMenuBarIcon()
                 self?.checkThresholdNotifications()
             }
         }
+        updateTimer?.tolerance = 10.0  // allow OS to coalesce wake-ups with other timers
     }
 
     // MARK: - Menu Bar Icon
