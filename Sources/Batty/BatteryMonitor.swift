@@ -93,27 +93,28 @@ class BatteryMonitor: ObservableObject {
     }
 
     func refresh() {
+        // Read IOPowerSources synchronously (fast, main-thread safe)
         readIOPowerSources()
-        readIOKitBatteryDetails()
+        // Read heavy IOKit battery details off the main thread
+        Task.detached(priority: .utility) {
+            let details = BatteryDetails.read()
+            await MainActor.run { [weak self] in
+                self?.applyDetails(details)
+            }
+        }
+        // Cache setup state without hitting the filesystem each time
         isSetupComplete = ChargeLimitManager.shared.isSetupComplete
         // Mirror discharge state — ChargeLimitManager may have stopped it (unplug/wake/target reached)
         let managerDischarging = ChargeLimitManager.shared.isDischarging
         if isDischarging && !managerDischarging {
-            // Discharge was stopped externally — update status
             isDischarging = false
             chargeLimitStatus = isLimitEnabled ? "Limit active at \(chargeLimit)%" : "No limit"
             saveSettings()
         } else {
             isDischarging = managerDischarging
         }
-        // Fallback enforcement on every refresh (notify is primary)
-        if isLimitEnabled && !isDischarging {
-            ChargeLimitManager.shared.enforceLimit(
-                chargeLimit,
-                currentPct: percentage,
-                isCurrentlyCharging: isCharging
-            )
-        }
+        // NOTE: enforcement is fully event-driven via ChargeLimitManager's
+        // notify_register_dispatch loop — do NOT call enforceLimit() here.
     }
 
     // MARK: - IOPowerSources (basic info)
@@ -131,10 +132,7 @@ class BatteryMonitor: ObservableObject {
             if let type = info[kIOPSTypeKey] as? String, type == kIOPSInternalBatteryType {
                 percentage = info[kIOPSCurrentCapacityKey] as? Int ?? percentage
                 isCharging = (info[kIOPSIsChargingKey] as? Bool) ?? false
-                isConnected = (info["Is Charging"] as? Bool) == true || (info[kIOPSPowerSourceStateKey] as? String) == kIOPSACPowerValue
-
-                let rawState = info[kIOPSPowerSourceStateKey] as? String ?? ""
-                isConnected = rawState == kIOPSACPowerValue
+                isConnected = (info[kIOPSPowerSourceStateKey] as? String) == kIOPSACPowerValue
 
                 if let tte = info[kIOPSTimeToEmptyKey] as? Int, tte > 0 {
                     timeToEmpty = tte
@@ -147,121 +145,36 @@ class BatteryMonitor: ObservableObject {
         }
     }
 
-    // MARK: - IOKit registry (detailed battery info)
-    private func readIOKitBatteryDetails() {
-        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
-        guard service != IO_OBJECT_NULL else { return }
-        defer { IOObjectRelease(service) }
-
-        func intProp(_ key: String) -> Int? {
-            IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? Int
+    // MARK: - IOKit registry (detailed battery info — runs off main thread)
+    private func applyDetails(_ d: BatteryDetails) {
+        if d.cycleCount        > 0 { cycleCount        = d.cycleCount }
+        if d.designCapacity    > 0 { designCapacity    = d.designCapacity }
+        if d.currentMaxCapacity > 0 { currentMaxCapacity = d.currentMaxCapacity }
+        if d.currentRawCapacity > 0 { currentRawCapacity = d.currentRawCapacity }
+        temperature     = d.temperature
+        voltage         = d.voltage
+        amperage        = d.amperage
+        wattage         = abs(d.voltage * d.amperage)
+        if d.avgTimeToFull  > 0 { avgTimeToFull  = d.avgTimeToFull  }
+        if d.avgTimeToEmpty > 0 { avgTimeToEmpty = d.avgTimeToEmpty }
+        batteryNetPower = d.batteryNetPower
+        systemLoad      = d.systemLoad
+        adapterPowerIn  = d.adapterPowerIn
+        adapterWatts    = d.adapterWatts
+        adapterName     = d.adapterName
+        if !d.manufacturer.isEmpty { manufacturer = d.manufacturer }
+        if d.healthPercent > 0 {
+            // Exact value from system_profiler — always matches macOS System Information
+            health = Double(d.healthPercent)
+        } else if d.designCapacity > 0 && d.currentMaxCapacity > 0 {
+            // Fallback: NominalChargeCapacity / DesignCapacity
+            health = min(100.0, floor(Double(d.currentMaxCapacity) / Double(d.designCapacity) * 100.0))
         }
-        func boolProp(_ key: String) -> Bool? {
-            IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? Bool
-        }
-        func stringProp(_ key: String) -> String? {
-            IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? String
-        }
-
-        // Cycle count
-        if let cc = intProp("CycleCount") {
-            cycleCount = cc
-        }
-
-        // Design capacity & max capacity
-        if let dc = intProp("DesignCapacity") {
-            designCapacity = dc
-        }
-        if let mc = intProp("AppleRawMaxCapacity") ?? intProp("MaxCapacity") {
-            currentMaxCapacity = mc
-        }
-
-        // Battery health percentage
-        if designCapacity > 0 && currentMaxCapacity > 0 {
-            health = min(100.0, Double(currentMaxCapacity) / Double(designCapacity) * 100.0)
-            if health >= 80 {
-                healthStatus = .good
-            } else if health >= 60 {
-                healthStatus = .fair
-            } else {
-                healthStatus = .poor
-            }
-        }
-
-        // Temperature (in 1/100 degrees Celsius from IOKit)
-        if let temp = intProp("Temperature") {
-            temperature = Double(temp) / 100.0
-        }
-
-        // Voltage (in mV)
-        if let v = intProp("Voltage") {
-            voltage = Double(v) / 1000.0
-        }
-
-        // Amperage (in mA, negative = discharging)
-        if let a = intProp("Amperage") {
-            amperage = Double(a) / 1000.0
-        }
-
-        // Net battery wattage (V × A)
-        wattage = abs(voltage * amperage)
-
-        // Current raw capacity (mAh)
-        if let rc = intProp("AppleRawCurrentCapacity") ?? intProp("CurrentCapacity") {
-            currentRawCapacity = rc
-        }
-
-        // Gauge time-to-full / time-to-empty (most accurate — direct from battery chip coulomb counter)
-        if let atf = intProp("AvgTimeToFull"), atf > 0, atf < 65535 {
-            avgTimeToFull = atf
-        } else {
-            avgTimeToFull = 0
-        }
-        if let ate = intProp("AvgTimeToEmpty"), ate > 0, ate < 65535 {
-            avgTimeToEmpty = ate
-        } else {
-            avgTimeToEmpty = 0
-        }
-
-        // Power telemetry (values are in mW × 1000 — divide by 1000 to get mW)
-        if let telemetry = IORegistryEntryCreateCFProperty(
-            service, "PowerTelemetryData" as CFString, kCFAllocatorDefault, 0
-        )?.takeRetainedValue() as? [String: Any] {
-            if let bp = telemetry["BatteryPower"] as? Int {
-                // BatteryPower > 0 means charging, but sign depends on state
-                // Use sign of Amperage to determine direction
-                let sign: Double = isCharging ? 1.0 : -1.0
-                batteryNetPower = sign * Double(bp) / 1000.0  // → Watts
-            }
-            if let sl = telemetry["SystemLoad"] as? Int {
-                systemLoad = Double(sl) / 1000.0  // → Watts
-            }
-            if let pi = telemetry["SystemPowerIn"] as? Int {
-                adapterPowerIn = Double(pi) / 1000.0  // → Watts
-            }
-        }
-
-        // Adapter details — clear when nothing connected so stale values don't persist
-        if let adapter = IORegistryEntryCreateCFProperty(
-            service, "AdapterDetails" as CFString, kCFAllocatorDefault, 0
-        )?.takeRetainedValue() as? [String: Any] {
-            adapterWatts = adapter["Watts"] as? Int ?? 0
-            adapterName  = adapter["Name"]  as? String ?? ""
-        } else {
-            adapterWatts = 0
-            adapterName  = ""
-        }
-
-        // Manufacturer
-        if let mfr = stringProp("Manufacturer") {
-            manufacturer = mfr
-        }
-
-        // Also refresh isCharging from IOKit if available
-        if let charging = boolProp("IsCharging") {
-            isCharging = charging
-        }
+        healthStatus = health >= 80 ? .good : health >= 60 ? .fair : .poor
+        if d.isChargingKnown { isCharging = d.isCharging }
     }
+
+
 
     // MARK: - Mode & Limit
     func setMode(_ mode: ChargeMode) {
@@ -445,5 +358,138 @@ class BatteryMonitor: ObservableObject {
 
     var healthString: String {
         String(format: "%.1f%%", health)
+    }
+}
+
+// MARK: - BatteryDetails (plain value type — safe to read on any thread)
+struct BatteryDetails {
+    var cycleCount: Int = 0
+    var designCapacity: Int = 0
+    var currentMaxCapacity: Int = 0
+    var currentRawCapacity: Int = 0
+    var temperature: Double = 0
+    var voltage: Double = 0
+    var amperage: Double = 0
+    var avgTimeToFull: Int = 0
+    var avgTimeToEmpty: Int = 0
+    var batteryNetPower: Double = 0
+    var systemLoad: Double = 0
+    var adapterPowerIn: Double = 0
+    var adapterWatts: Int = 0
+    var adapterName: String = ""
+    var manufacturer: String = ""
+    var isCharging: Bool = false
+    var isChargingKnown: Bool = false
+    var healthPercent: Int = 0   // from system_profiler; 0 = unavailable
+
+    /// Read all IOKit battery properties. Safe to call on any thread.
+    static func read() -> BatteryDetails {
+        var d = BatteryDetails()
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
+        guard service != IO_OBJECT_NULL else { return d }
+        defer { IOObjectRelease(service) }
+
+        func intProp(_ key: String) -> Int? {
+            IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)
+                .map { $0.takeRetainedValue() as? Int } ?? nil
+        }
+        func boolProp(_ key: String) -> Bool? {
+            IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)
+                .map { $0.takeRetainedValue() as? Bool } ?? nil
+        }
+        func stringProp(_ key: String) -> String? {
+            IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)
+                .map { $0.takeRetainedValue() as? String } ?? nil
+        }
+
+        d.cycleCount         = intProp("CycleCount") ?? 0
+        d.designCapacity     = intProp("DesignCapacity") ?? 0
+        // NominalChargeCapacity is what macOS System Information uses for health.
+        d.currentMaxCapacity = intProp("NominalChargeCapacity")
+                            ?? intProp("AppleRawMaxCapacity")
+                            ?? intProp("MaxCapacity")
+                            ?? 0
+        d.currentRawCapacity = intProp("AppleRawCurrentCapacity") ?? intProp("CurrentCapacity") ?? 0
+
+        // Read health % directly from system_profiler to exactly match macOS System Information
+        d.healthPercent = BatteryDetails.readSystemProfilerHealthPercent()
+        d.currentRawCapacity = intProp("AppleRawCurrentCapacity") ?? intProp("CurrentCapacity") ?? 0
+
+        if let temp = intProp("Temperature") { d.temperature = Double(temp) / 100.0 }
+        if let v    = intProp("Voltage")     { d.voltage     = Double(v)    / 1000.0 }
+        if let a    = intProp("Amperage")    { d.amperage    = Double(a)    / 1000.0 }
+
+        let atf = intProp("AvgTimeToFull")  ?? 0
+        let ate = intProp("AvgTimeToEmpty") ?? 0
+        d.avgTimeToFull  = (atf > 0 && atf < 65535) ? atf : 0
+        d.avgTimeToEmpty = (ate > 0 && ate < 65535) ? ate : 0
+
+        if let telemetry = IORegistryEntryCreateCFProperty(
+            service, "PowerTelemetryData" as CFString, kCFAllocatorDefault, 0
+        )?.takeRetainedValue() as? [String: Any] {
+            // Determine charging from amperage sign (positive = charging)
+            let charging = d.amperage > 0
+            if let bp = telemetry["BatteryPower"] as? Int {
+                d.batteryNetPower = (charging ? 1.0 : -1.0) * Double(bp) / 1000.0
+            }
+            if let sl = telemetry["SystemLoad"]    as? Int { d.systemLoad    = Double(sl) / 1000.0 }
+            if let pi = telemetry["SystemPowerIn"] as? Int { d.adapterPowerIn = Double(pi) / 1000.0 }
+        }
+
+        if let adapter = IORegistryEntryCreateCFProperty(
+            service, "AdapterDetails" as CFString, kCFAllocatorDefault, 0
+        )?.takeRetainedValue() as? [String: Any] {
+            d.adapterWatts = adapter["Watts"] as? Int    ?? 0
+            d.adapterName  = adapter["Name"]  as? String ?? ""
+        }
+
+        d.manufacturer = stringProp("Manufacturer") ?? ""
+        if let charging = boolProp("IsCharging") {
+            d.isCharging      = charging
+            d.isChargingKnown = true
+        }
+        return d
+    }
+
+    /// Parse the health % that macOS System Information shows.
+    /// Runs `system_profiler SPPowerDataType -xml` and extracts
+    /// `sppower_battery_health_maximum_capacity` (e.g. "93%" → 93).
+    /// Cached for 60 s to avoid re-running system_profiler on every refresh.
+    private static var cachedHealthPercent: Int = 0
+    private static var healthCacheTime: Date = .distantPast
+
+    static func readSystemProfilerHealthPercent() -> Int {
+        let now = Date()
+        if cachedHealthPercent > 0 && now.timeIntervalSince(healthCacheTime) < 60 {
+            return cachedHealthPercent
+        }
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
+        task.arguments = ["SPPowerDataType", "-xml"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError  = Pipe()
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch { return cachedHealthPercent }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let xml = String(data: data, encoding: .utf8) else { return cachedHealthPercent }
+        // Look for `sppower_battery_health_maximum_capacity` followed by a string like "93%"
+        if let keyRange = xml.range(of: "sppower_battery_health_maximum_capacity") {
+            let after = xml[keyRange.upperBound...]
+            if let strStart = after.range(of: "<string>"),
+               let strEnd   = after.range(of: "</string>") {
+                let raw = String(after[strStart.upperBound..<strEnd.lowerBound])
+                    .trimmingCharacters(in: .whitespaces)
+                    .replacingOccurrences(of: "%", with: "")
+                if let pct = Int(raw), pct > 0 {
+                    cachedHealthPercent = pct
+                    healthCacheTime = now
+                    return pct
+                }
+            }
+        }
+        return cachedHealthPercent
     }
 }

@@ -119,16 +119,25 @@ final class ChargeLimitManager: ObservableObject {
 
     func stopEnforcement() {
         stopPercentLoop()
+        // Also stop the plug/unplug loop — otherwise replug would restart enforcement
+        if powerToken != NOTIFY_TOKEN_INVALID {
+            notify_cancel(powerToken)
+            powerToken = NOTIFY_TOKEN_INVALID
+        }
     }
 
     func enforceLimit(_ maxCharge: Int, currentPct: Int, isCurrentlyCharging: Bool) {
         guard isSetupComplete, !isDischarging else { return }
         let minCharge = max(20, maxCharge - hysteresis)
-        if currentPct >= maxCharge && isCurrentlyCharging {
-            disableCharging()
-        } else if currentPct < minCharge && !isCurrentlyCharging {
-            enableCharging()
+        if currentPct >= maxCharge {
+            // At or above limit — turn off charging regardless of current state
+            if isCurrentlyCharging { disableCharging() }
+        } else if currentPct < minCharge {
+            // Below hysteresis floor — always re-enable charging
+            if !isCurrentlyCharging { enableCharging() }
         }
+        // Between minCharge and maxCharge: do nothing — respect whatever state charging is in.
+        // (Charging was explicitly disabled at the limit; it stays off until hysteresis kicks in.)
     }
 
     func enableCharging() {
@@ -168,9 +177,8 @@ final class ChargeLimitManager: ObservableObject {
     private func isSudoersInstalled() -> Bool {
         guard FileManager.default.fileExists(atPath: Self.sudoersPath) else { return false }
         guard let content = try? String(contentsOfFile: Self.sudoersPath, encoding: .utf8) else { return false }
-        // Verify it covers our smc binary
-        let smc = Self.smcPath
-        return content.contains(smc)
+        // Verify it covers both our smc binary and pmset
+        return content.contains(Self.smcPath) && content.contains("/usr/bin/pmset")
     }
 
     private func installSudoers() async -> Bool {
@@ -186,7 +194,7 @@ final class ChargeLimitManager: ObservableObject {
             return false
         }
 
-        let sudoersLine = "\(username) ALL=(ALL) NOPASSWD: \(smc) *\n"
+        let sudoersLine = "\(username) ALL=(ALL) NOPASSWD: \(smc) *, /usr/bin/pmset *\n"
         let sudoersFile = Self.sudoersPath
 
         // We need to write to /etc/sudoers.d/ which requires root.
@@ -253,20 +261,6 @@ final class ChargeLimitManager: ObservableObject {
         }
     }
 
-    // MARK: - Quick battery % read
-    private func currentPercent() -> Int? {
-        guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
-              let sources  = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef]
-        else { return nil }
-        for src in sources {
-            if let info = IOPSGetPowerSourceDescription(snapshot, src)?.takeUnretainedValue() as? [String: Any],
-               let type = info[kIOPSTypeKey] as? String, type == kIOPSInternalBatteryType {
-                return info[kIOPSCurrentCapacityKey] as? Int
-            }
-        }
-        return nil
-    }
-
     // MARK: - Sleep / Wake
 
     private func registerSleepWake() {
@@ -297,9 +291,15 @@ final class ChargeLimitManager: ObservableObject {
     }
 
     private func handleWillSleep() {
-        os_log("Batty: sleep — restoring SMC defaults")
-        restoreDefaults()
+        // Stop the notify loops — the SMC key state persists through sleep,
+        // so we intentionally leave CHTE/CHIE as-is. Re-enabling charging here
+        // would let the battery charge past the limit overnight.
+        os_log("Batty: sleep — pausing enforcement loops (SMC state preserved)")
         stopPercentLoop()
+        if powerToken != NOTIFY_TOKEN_INVALID {
+            notify_cancel(powerToken)
+            powerToken = NOTIFY_TOKEN_INVALID
+        }
     }
 
     private func handleWake() {
@@ -312,8 +312,25 @@ final class ChargeLimitManager: ObservableObject {
 
     private func reapplyAfterWake() {
         guard isSetupComplete else { return }
+
+        // Read current % and charging state fresh from IOPowerSources
+        var pct = 100
+        var isCurrentlyCharging = false
+        var isConnected = false
+        if let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+           let sources  = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef] {
+            for src in sources {
+                if let info = IOPSGetPowerSourceDescription(snapshot, src)?.takeUnretainedValue() as? [String: Any],
+                   let type = info[kIOPSTypeKey] as? String, type == kIOPSInternalBatteryType {
+                    pct                = info[kIOPSCurrentCapacityKey] as? Int ?? 100
+                    isCurrentlyCharging = (info[kIOPSIsChargingKey] as? Bool) ?? false
+                    isConnected        = (info[kIOPSPowerSourceStateKey] as? String) == kIOPSACPowerValue
+                    break
+                }
+            }
+        }
+
         if isDischarging {
-            let pct = currentPercent() ?? 100
             if pct <= dischargeTarget {
                 stopDischarge()
             } else {
@@ -322,7 +339,12 @@ final class ChargeLimitManager: ObservableObject {
                 startEnforcement()
             }
         } else {
-            startEnforcement()
+            // Immediately re-enforce in case battery charged past limit during sleep
+            enforceLimit(limitMaxCharge, currentPct: pct, isCurrentlyCharging: isCurrentlyCharging)
+            // Restart event loops (only needed when plugged in)
+            if isConnected {
+                startEnforcement()
+            }
         }
     }
 
@@ -390,7 +412,22 @@ final class ChargeLimitManager: ObservableObject {
     }
 
     private func handlePercentChange() {
-        guard let pct = currentPercent() else { return }
+        // Single IOPowerSources read — extract both percent AND charging state together
+        guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let sources  = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef]
+        else { return }
+
+        var pct: Int? = nil
+        var isCharging = false
+        for src in sources {
+            if let info = IOPSGetPowerSourceDescription(snapshot, src)?.takeUnretainedValue() as? [String: Any],
+               let type = info[kIOPSTypeKey] as? String, type == kIOPSInternalBatteryType {
+                pct        = info[kIOPSCurrentCapacityKey] as? Int
+                isCharging = (info[kIOPSIsChargingKey] as? Bool) ?? false
+                break
+            }
+        }
+        guard let pct else { return }
 
         if isDischarging {
             if pct <= dischargeTarget {
@@ -400,18 +437,6 @@ final class ChargeLimitManager: ObservableObject {
             return
         }
 
-        // Enforce charge limit on every % tick (notify fires on each whole-percent change)
-        // BatteryMonitor.refresh() provides the isCharging state; use IOPSInfo here directly.
-        guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
-              let sources  = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef]
-        else { return }
-        for src in sources {
-            if let info = IOPSGetPowerSourceDescription(snapshot, src)?.takeUnretainedValue() as? [String: Any],
-               let type = info[kIOPSTypeKey] as? String, type == kIOPSInternalBatteryType {
-                let isCharging = (info[kIOPSIsChargingKey] as? Bool) ?? false
-                enforceLimit(limitMaxCharge, currentPct: pct, isCurrentlyCharging: isCharging)
-                break
-            }
-        }
+        enforceLimit(limitMaxCharge, currentPct: pct, isCurrentlyCharging: isCharging)
     }
 }
