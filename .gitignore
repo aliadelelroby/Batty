@@ -21,5 +21,8 @@ DerivedData/
 # App bundle (built output — not tracked)
 *.app
 
+# DMG and distribution artifacts
+dist/
+
 # Battery-Toolkit reference clone (not part of this project)
 Battery-Toolkit/

@@ -20,9 +20,31 @@ All of this runs with no background daemon, no Apple Developer account, and no c
 
 ---
 
+## Install
+
+### Option 1 — DMG (recommended, no Terminal needed)
+
+1. Download `Batty.dmg` from [Releases](https://github.com/aliadelelroby/Batty/releases)
+2. Open the DMG and drag **Batty** to your **Applications** folder
+3. Launch Batty from Applications — it will appear in the menu bar
+4. On first launch, Batty shows a setup screen — click **Grant Permission** and enter your admin password once
+5. Done. Open the menu bar icon → **Settings** → set your limit → tap **Apply**
+
+### Option 2 — Build from source
+
+```bash
+git clone https://github.com/aliadelelroby/Batty.git
+cd Batty
+bash install.sh
+```
+
+The installer builds a release binary, creates the app bundle at `/Applications/Batty.app`, and handles the one-time sudoers setup.
+
+---
+
 ## How the charge limit works
 
-Batty writes Apple SMC keys directly using a bundled `smc` binary with passwordless `sudo`. A one-time admin password is required during install to write `/etc/sudoers.d/batty`. After that, no further prompts ever appear.
+Batty writes Apple SMC keys using a bundled `smc` binary with passwordless `sudo`. A one-time admin password is required during first launch (or install) to write `/etc/sudoers.d/batty`. After that, no further prompts ever appear.
 
 | SMC key | Type  | OFF (limit active) | ON (normal)   | Purpose                                  |
 | ------- | ----- | ------------------ | ------------- | ---------------------------------------- |
@@ -39,29 +61,7 @@ Enforcement fires on every 1% battery change via `notify_register_dispatch("com.
 
 - Apple Silicon MacBook (M1 / M2 / M3 / M4)
 - macOS 13 Ventura or later
-- Xcode Command Line Tools (`xcode-select --install`)
 - No Apple Developer account needed
-
----
-
-## Install
-
-```bash
-git clone https://github.com/aliadelelroby/Batty.git
-cd Batty
-bash install.sh
-```
-
-The installer will:
-
-1. Kill any running instance and wipe the previous install
-2. Build a release binary with Swift Package Manager
-3. Copy the app bundle to `/Applications/Batty.app`
-4. Ask for your admin password **once** to write `/etc/sudoers.d/batty`
-5. Run a quick SMC write test to confirm everything works
-6. Launch the app
-
-After install, Batty lives in the menu bar. Open it → **Settings** → set your limit → tap **Apply**.
 
 ---
 
@@ -74,13 +74,14 @@ sudo rm -rf /Applications/Batty.app
 
 ---
 
-## Building manually
+## Building the DMG
 
 ```bash
-swift build -c release
+bash make-dmg.sh
+# Output: dist/Batty.dmg
 ```
 
-The binary is at `.build/release/Batty`. The `smc` binary must be present at `Sources/Batty/Resources/smc` (already included in the repo).
+Requires only Xcode Command Line Tools (`xcode-select --install`). No external tools needed.
 
 ---
 
@@ -89,17 +90,19 @@ The binary is at `.build/release/Batty`. The `smc` binary must be present at `So
 ```
 Sources/
   Batty/
-    BattyApp.swift          — @main entry point
-    AppDelegate.swift       — NSStatusItem, popover, timer, notifications
-    BatteryMonitor.swift    — IOKit battery reads, charge limit logic, persistence
+    BattyApp.swift           — @main entry point
+    AppDelegate.swift        — NSStatusItem, popover, timer, notifications
+    BatteryMonitor.swift     — IOKit battery reads, charge limit logic, persistence
     ChargeLimitManager.swift — SMC writes via sudo smc, sleep/wake, enforcement loop
-    ContentView.swift       — Tab container with sliding animation and glass tab bar
-    OverviewTab.swift       — Hero percentage, stats, progress bar, limit strip
-    DetailsTab.swift        — All battery detail rows
-    SettingsTab.swift       — Limit slider, mode presets, discharge, menu bar prefs
+    OnboardingWindow.swift   — First-launch setup window (welcome → permission → done)
+    ContentView.swift        — Tab container with sliding animation and glass tab bar
+    OverviewTab.swift        — Hero percentage, stats, progress bar, limit strip
+    DetailsTab.swift         — All battery detail rows
+    SettingsTab.swift        — Limit slider, mode presets, discharge, menu bar prefs
     Resources/
-      smc                   — Bundled SMC CLI binary (arm64)
-install.sh                  — One-command installer
+      smc                    — Bundled SMC CLI binary (arm64)
+install.sh                   — Developer one-command installer (builds + bundles + sudoers)
+make-dmg.sh                  — Builds a distributable Batty.dmg
 ```
 
 ---
