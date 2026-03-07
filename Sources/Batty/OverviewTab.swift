@@ -79,10 +79,15 @@ struct OverviewTab: View {
     private var statusText: String {
         if monitor.isCharging {
             let t = monitor.timeRemainingString
-            // Strip trailing " to full" from timeRemainingString for brevity
             return t.replacingOccurrences(of: " to full", with: "")
         }
-        if monitor.isConnected { return "Not charging" }
+        if monitor.isConnected {
+            // Only say "Not charging" when the limit is engaged and holding the cap
+            if monitor.isLimitEnabled && monitor.percentage >= monitor.chargeLimit {
+                return "Not charging · limit reached"
+            }
+            return "Plugged in"
+        }
         return monitor.timeRemainingString
             .replacingOccurrences(of: " remaining", with: "")
     }
