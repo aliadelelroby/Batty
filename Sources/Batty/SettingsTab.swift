@@ -4,6 +4,7 @@ import ServiceManagement
 struct SettingsTab: View {
     @EnvironmentObject var monitor: BatteryMonitor
     @ObservedObject private var limitManager = ChargeLimitManager.shared
+    @ObservedObject private var power = PowerManager.shared
     let scrollToTopTrigger: Bool
     @State private var customLimit: Double = 80
     @State private var lastHapticLimit: Int = -1
@@ -27,6 +28,8 @@ struct SettingsTab: View {
                     setupStatusRow
                     divider
                     dischargeSection
+                    divider
+                    powerSection
                     divider
                     menuBarSection
                     divider
@@ -53,6 +56,7 @@ struct SettingsTab: View {
             customLimit = Double(monitor.chargeLimit)
             lastHapticLimit = monitor.chargeLimit
             launchAtLogin = (SMAppService.mainApp.status == .enabled)
+            power.refresh()
         }
     }
 
@@ -158,6 +162,234 @@ struct SettingsTab: View {
             .background(Color.primary.opacity(0.04))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
+    }
+
+    // MARK: - Power Section
+    private var powerSection: some View {
+        VStack(spacing: 14) {
+            // Profile indicator (read-only, follows power source)
+            HStack(spacing: 6) {
+                Image(systemName: monitor.isConnected ? "bolt.fill" : "battery.75")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.primary.opacity(0.5))
+                Text(monitor.isConnected ? "Plugged in" : "Battery")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.primary.opacity(0.5))
+                Spacer()
+                Text("Settings for current source")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.primary.opacity(0.25))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.primary.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            // Performance mode
+            VStack(spacing: 0) {
+                sectionHeader("Performance")
+                    .padding(.bottom, 10)
+
+                VStack(spacing: 2) {
+                    powerToggleRow(
+                        icon: "tortoise",
+                        title: "Low Power Mode",
+                        subtitle: "Reduces CPU speed, display brightness, background activity",
+                        isOn: Binding(
+                            get: { monitor.isConnected ? power.lowPowerModeAC : power.lowPowerModeBattery },
+                            set: { val in
+                                NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
+                                power.setLowPowerMode(val, source: monitor.isConnected ? .ac : .battery)
+                            }
+                        )
+                    )
+
+                    if !monitor.isConnected {
+                        HStack(spacing: 10) {
+                            Image(systemName: "hare")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color.primary.opacity(0.18))
+                                .frame(width: 20)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("High Power Mode")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Color.primary.opacity(0.22))
+                                Text("AC only")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(Color.primary.opacity(0.18))
+                            }
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                    } else {
+                        powerToggleRow(
+                            icon: "hare",
+                            title: "High Power Mode",
+                            subtitle: "Sustained peak performance; fans louder, battery drains faster",
+                            isOn: Binding(
+                                get: { power.highPowerModeAC },
+                                set: { val in
+                                    NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
+                                    power.setHighPowerMode(val)
+                                }
+                            )
+                        )
+                    }
+                }
+                .background(Color.primary.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+
+            // Background & sleep
+            VStack(spacing: 0) {
+                sectionHeader("Sleep")
+                    .padding(.bottom, 10)
+
+                VStack(spacing: 2) {
+                    powerToggleRow(
+                        icon: "moon.zzz",
+                        title: "Power Nap",
+                        subtitle: "Fetch mail, contacts, iCloud updates while asleep",
+                        isOn: Binding(
+                            get: { monitor.isConnected ? power.powerNapAC : power.powerNapBattery },
+                            set: { val in
+                                NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
+                                power.setPowerNap(val, source: monitor.isConnected ? .ac : .battery)
+                            }
+                        )
+                    )
+                }
+                .background(Color.primary.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .padding(.bottom, 10)
+
+                VStack(spacing: 10) {
+                    sleepSlider(
+                        label: "Display sleep",
+                        icon: "display",
+                        value: Binding(
+                            get: { Double(monitor.isConnected ? power.displaySleepAC : power.displaySleepBattery) },
+                            set: { val in power.setDisplaySleep(Self.sleepStep(Int(val)), source: monitor.isConnected ? .ac : .battery) }
+                        )
+                    )
+                    .padding(14)
+                    .background(Color.primary.opacity(0.04))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                    sleepSlider(
+                        label: "System sleep",
+                        icon: "zzz",
+                        value: Binding(
+                            get: { Double(monitor.isConnected ? power.systemSleepAC : power.systemSleepBattery) },
+                            set: { val in power.setSystemSleep(Self.sleepStep(Int(val)), source: monitor.isConnected ? .ac : .battery) }
+                        )
+                    )
+                    .padding(14)
+                    .background(Color.primary.opacity(0.04))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            }
+        }
+    }
+
+    private func powerToggleRow(icon: String, title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundStyle(Color.primary.opacity(limitManager.isSetupComplete ? 0.4 : 0.2))
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.primary.opacity(limitManager.isSetupComplete ? 0.75 : 0.3))
+                Text(subtitle)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.primary.opacity(limitManager.isSetupComplete ? 0.3 : 0.18))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Toggle("", isOn: isOn)
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+                .disabled(!limitManager.isSetupComplete)
+                .opacity(limitManager.isSetupComplete ? 1 : 0.35)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.05))
+                .frame(height: 0.5)
+                .padding(.leading, 42)
+        }
+    }
+
+    private func sleepSlider(label: String, icon: String, value: Binding<Double>) -> some View {
+        VStack(spacing: 10) {
+            // Header row: icon + label on left, big value on right
+            HStack(alignment: .firstTextBaseline) {
+                Image(systemName: icon)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.primary.opacity(0.35))
+                Text(label)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.primary.opacity(0.5))
+                Spacer()
+                Text(Self.sleepLabel(Int(value.wrappedValue)))
+                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color.primary.opacity(0.85))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: Int(value.wrappedValue))
+            }
+
+            // Slider
+            Slider(value: value, in: 0...120)
+                .tint(Color.primary.opacity(0.6))
+                .disabled(!limitManager.isSetupComplete)
+                .opacity(limitManager.isSetupComplete ? 1 : 0.35)
+
+            // Quick-select chips
+            HStack(spacing: 6) {
+                ForEach([0, 2, 5, 10, 30], id: \.self) { mins in
+                    Button {
+                        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
+                        withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
+                            value.wrappedValue = Double(mins)
+                        }
+                    } label: {
+                        let selected = Int(value.wrappedValue) == mins
+                        Text(mins == 0 ? "Never" : "\(mins)m")
+                            .font(.system(size: 12, weight: .medium))
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 5)
+                            .background(Color.primary.opacity(selected ? 0.1 : 0.04))
+                            .foregroundStyle(Color.primary.opacity(selected ? 0.8 : 0.35))
+                            .clipShape(Capsule())
+                            .scaleEffect(selected ? 1.04 : 1.0)
+                            .animation(.spring(response: 0.2, dampingFraction: 0.7), value: selected)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!limitManager.isSetupComplete)
+                    .opacity(limitManager.isSetupComplete ? 1 : 0.35)
+                }
+            }
+        }
+    }
+
+    private static func sleepStep(_ raw: Int) -> Int {
+        let steps = [0, 1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120]
+        return steps.min(by: { abs($0 - raw) < abs($1 - raw) }) ?? raw
+    }
+
+    private static func sleepLabel(_ minutes: Int) -> String {
+        if minutes == 0 { return "Never" }
+        if minutes < 60 { return "\(minutes) min" }
+        let h = minutes / 60; let m = minutes % 60
+        return m > 0 ? "\(h)h \(m)m" : "\(h)h"
     }
 
     // MARK: - Divider
