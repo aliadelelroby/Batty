@@ -1,0 +1,43 @@
+{
+  "header": {
+    "version": "1.0",
+    "createdAt": "2026-03-08T11:50:56.583Z",
+    "modifiedAt": "2026-03-08T11:50:56.583Z"
+  },
+  "document": {
+    "id": "root",
+    "name": "Document",
+    "pages": [
+      {
+        "type": "PAGE",
+        "id": "Z1kxb",
+        "name": "Page 1",
+        "visible": true,
+        "locked": false,
+        "children": [],
+        "selection": [],
+        "selectedTextRange": null,
+        "guides": [],
+        "flowStartingPoints": [],
+        "backgrounds": [
+          {
+            "type": "SOLID",
+            "color": {
+              "r": 1,
+              "g": 1,
+              "b": 1,
+              "a": 1
+            },
+            "opacity": 1,
+            "visible": true,
+            "blendMode": "NORMAL"
+          }
+        ],
+        "prototypeBackgrounds": [],
+        "prototypeStartNode": null,
+        "focusedSlide": null,
+        "focusedNode": null
+      }
+    ]
+  }
+}

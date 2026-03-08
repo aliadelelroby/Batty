@@ -1,0 +1,2292 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Batty: Hardware Charge Limits for Apple Silicon</title>
+    <meta
+      name="description"
+      content="Batty enforces real hardware charge limits on Apple Silicon MacBooks. No subscription, no daemon, no code signing. Free and open source."
+    />
+    <meta
+      property="og:title"
+      content="Batty: Hardware Charge Limits for Apple Silicon"
+    />
+    <meta
+      property="og:description"
+      content="Batty enforces real hardware charge limits on Apple Silicon MacBooks. Free and open source."
+    />
+    <meta property="og:type" content="website" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wdth,wght@0,62.5..100,100..900;1,62.5..100,100..900&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      :root {
+        --bg: #ffffff;
+        --surface: #f3f3f3;
+        --surface-2: #ebebeb;
+        --surface-3: #e0e0e0;
+        --text-primary: #000000;
+        --text-secondary: #3d3d3d;
+        --text-tertiary: #888888;
+        --border: rgba(0, 0, 0, 0.07);
+        --border-strong: rgba(0, 0, 0, 0.12);
+        --r-sm: 12px;
+        --r-md: 18px;
+        --r-lg: 24px;
+        --r-xl: 30px;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        font-family:
+          "Noto Sans",
+          -apple-system,
+          BlinkMacSystemFont,
+          sans-serif;
+        background: var(--bg);
+        color: var(--text-primary);
+        -webkit-font-smoothing: antialiased;
+        line-height: 1.5;
+      }
+
+      /* ── NAV ─────────────────────────────────────────────── */
+      nav {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        background: rgba(255, 255, 255, 0.85);
+        backdrop-filter: saturate(180%) blur(20px);
+        -webkit-backdrop-filter: saturate(180%) blur(20px);
+        border-bottom: 1px solid var(--border);
+      }
+      .nav-inner {
+        max-width: 1040px;
+        margin: 0 auto;
+        padding: 0 40px;
+        height: 56px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .nav-logo {
+        font-family: "Noto Sans", sans-serif;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        color: var(--text-primary);
+        text-decoration: none;
+      }
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 28px;
+        list-style: none;
+      }
+      .nav-links a {
+        font-size: 13.5px;
+        color: var(--text-tertiary);
+        text-decoration: none;
+        transition: color 0.15s;
+        font-weight: 400;
+      }
+      .nav-links a:hover {
+        color: var(--text-primary);
+      }
+      .nav-cta {
+        font-size: 12.5px !important;
+        font-weight: 500 !important;
+        color: #fff !important;
+        background: var(--text-primary);
+        padding: 7px 16px;
+        border-radius: 980px;
+        transition: opacity 0.15s !important;
+        letter-spacing: -0.01em;
+      }
+      .nav-cta:hover {
+        opacity: 0.72 !important;
+      }
+
+      /* ── SHARED ──────────────────────────────────────────── */
+      .container {
+        max-width: 1040px;
+        margin: 0 auto;
+        padding: 0 40px;
+      }
+
+      h1 {
+        font-family: "Noto Sans", sans-serif;
+        font-size: clamp(40px, 5.5vw, 68px);
+        font-weight: 600;
+        font-style: normal;
+        line-height: 1.06;
+        letter-spacing: -0.03em;
+        color: var(--text-primary);
+      }
+      h2 {
+        font-family: "Noto Sans", sans-serif;
+        font-size: clamp(28px, 3.5vw, 48px);
+        font-weight: 600;
+        font-style: normal;
+        letter-spacing: -0.03em;
+        color: var(--text-primary);
+        line-height: 1.08;
+      }
+      h3 {
+        font-family: "Noto Sans", sans-serif;
+        font-size: clamp(15px, 1.8vw, 18px);
+        font-weight: 500;
+        color: var(--text-secondary);
+        letter-spacing: -0.015em;
+        line-height: 1.35;
+      }
+      p {
+        color: var(--text-secondary);
+        font-size: 15.5px;
+        line-height: 1.65;
+        font-weight: 400;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 13px;
+        font-weight: 500;
+        letter-spacing: -0.01em;
+        padding: 11px 22px;
+        border-radius: 980px;
+        text-decoration: none;
+        transition:
+          opacity 0.15s,
+          transform 0.15s;
+        cursor: pointer;
+        border: none;
+      }
+      .btn:hover {
+        opacity: 0.72;
+      }
+      .btn-primary {
+        background: var(--text-primary);
+        color: #fff;
+      }
+      .btn-secondary {
+        background: var(--surface);
+        color: var(--text-primary);
+      }
+
+      /* ── HERO ────────────────────────────────────────────── */
+      #hero {
+        padding: 100px 0 80px;
+        text-align: center;
+        background: var(--bg);
+      }
+      .hero-eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+        margin-bottom: 28px;
+      }
+      .hero-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #34c759;
+        flex-shrink: 0;
+      }
+      .hero-headline {
+        max-width: 700px;
+        margin: 0 auto 22px;
+      }
+      .hero-sub {
+        font-size: 17px;
+        color: var(--text-tertiary);
+        line-height: 1.65;
+        max-width: 480px;
+        margin: 0 auto 40px;
+        font-weight: 400;
+      }
+      .hero-actions {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 14px;
+      }
+      .hero-note {
+        font-size: 12px;
+        color: var(--text-tertiary);
+        margin-top: 10px;
+        letter-spacing: 0.01em;
+      }
+
+      /* ── BENTO HERO MOCKUP ───────────────────────────────── */
+      .hero-bento {
+        margin-top: 80px;
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        grid-template-rows: auto auto;
+        gap: 16px;
+        max-width: 960px;
+        margin-left: auto;
+        margin-right: auto;
+        margin-top: 80px;
+      }
+      .bento-card {
+        background: var(--surface);
+        border-radius: var(--r-xl);
+        padding: 35px;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        position: relative;
+        overflow: hidden;
+      }
+      .bento-card.large {
+        grid-column: span 2;
+      }
+      .bento-card.tall {
+        grid-row: span 2;
+      }
+      .bento-stat-num {
+        font-family: "Noto Sans", sans-serif;
+        font-size: 64px;
+        font-weight: 700;
+        font-style: normal;
+        letter-spacing: -0.04em;
+        color: var(--text-primary);
+        line-height: 1;
+      }
+      .bento-label {
+        font-family: "Noto Sans", sans-serif;
+        font-size: 15px;
+        font-weight: 500;
+        color: var(--text-secondary);
+        letter-spacing: -0.015em;
+        margin-top: auto;
+      }
+      .bento-sub-label {
+        font-size: 13px;
+        color: var(--text-tertiary);
+        margin-top: 4px;
+      }
+
+      /* App window as bento card */
+      .app-window {
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        background: var(--surface);
+        border-radius: var(--r-xl);
+      }
+      .app-window.tall {
+        grid-row: span 2;
+      }
+      .app-tab-content {
+        flex: 1;
+        overflow: hidden;
+        position: relative;
+        min-height: 0;
+      }
+      .app-tab-bar {
+        margin: 0 10px 8px;
+        height: 50px;
+        display: flex;
+        align-items: center;
+        flex-shrink: 0;
+        position: relative;
+      }
+      .app-tab-bar-bg {
+        position: absolute;
+        inset: 0;
+        border-radius: 15px;
+        background: rgba(255, 255, 255, 0.6);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        border: 0.5px solid rgba(255, 255, 255, 0.85);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+      }
+      .app-tab-buttons {
+        position: relative;
+        display: flex;
+        width: 100%;
+        padding: 0 5px;
+        z-index: 1;
+      }
+      .app-tab-btn {
+        flex: 1;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 10px;
+        border: none;
+        background: transparent;
+        padding: 0;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          box-shadow 0.15s;
+      }
+      .app-tab-btn.active {
+        background: rgba(255, 255, 255, 0.7);
+        border: 0.5px solid rgba(255, 255, 255, 0.8);
+        box-shadow: 0 1px 5px rgba(0, 0, 0, 0.07);
+      }
+      .app-tab-btn svg {
+        width: 15px;
+        height: 15px;
+      }
+      .app-tab-btn.active svg {
+        opacity: 0.7;
+      }
+      .app-tab-btn:not(.active) svg {
+        opacity: 0.2;
+      }
+
+      /* Overview tab */
+      .ov-body {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+      .ov-hero {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+      }
+      .ov-pct-block {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+      }
+      .ov-pct-line {
+        display: flex;
+        align-items: baseline;
+        gap: 1px;
+      }
+      .ov-pct-num {
+        font-size: 68px;
+        font-weight: 600;
+        letter-spacing: -3.5px;
+        color: rgba(0, 0, 0, 0.87);
+        line-height: 1;
+      }
+      .ov-pct-unit {
+        font-size: 22px;
+        font-weight: 300;
+        color: rgba(0, 0, 0, 0.22);
+        margin-bottom: 4px;
+      }
+      .ov-status {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 12px;
+        color: rgba(0, 0, 0, 0.32);
+      }
+      .ov-status-bolt {
+        width: 9px;
+        height: 9px;
+        opacity: 0.45;
+      }
+      .ov-progress {
+        width: 100%;
+        padding: 0 36px;
+      }
+      .ov-progress-track {
+        height: 3px;
+        background: rgba(0, 0, 0, 0.06);
+        border-radius: 2px;
+        position: relative;
+      }
+      .ov-progress-ghost {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 80%;
+        height: 3px;
+        background: rgba(0, 0, 0, 0.11);
+        border-radius: 2px;
+      }
+      .ov-progress-fill {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 73%;
+        height: 3px;
+        background: rgba(0, 0, 0, 0.46);
+        border-radius: 2px;
+      }
+      .ov-stats {
+        display: flex;
+        align-items: center;
+        margin: 0 16px;
+        background: rgba(0, 0, 0, 0.04);
+        border-radius: 11px;
+        padding: 10px 0;
+      }
+      .ov-stat {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+      }
+      .ov-stat-val {
+        font-size: 12px;
+        font-weight: 500;
+        color: rgba(0, 0, 0, 0.82);
+      }
+      .ov-stat-lbl {
+        font-size: 10px;
+        color: rgba(0, 0, 0, 0.3);
+      }
+      .ov-stat-div {
+        width: 0.5px;
+        height: 18px;
+        background: rgba(0, 0, 0, 0.07);
+      }
+      .ov-limit {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 8px 16px 12px;
+        background: rgba(0, 0, 0, 0.04);
+        border-radius: 11px;
+        padding: 9px 12px;
+      }
+      .ov-limit-icon {
+        width: 10px;
+        height: 10px;
+        opacity: 0.45;
+        flex-shrink: 0;
+      }
+      .ov-limit-label {
+        font-size: 11px;
+        color: rgba(0, 0, 0, 0.5);
+        flex: 1;
+      }
+      .mock-toggle {
+        width: 26px;
+        height: 15px;
+        background: rgba(0, 0, 0, 0.5);
+        border-radius: 8px;
+        position: relative;
+        flex-shrink: 0;
+      }
+      .mock-toggle-thumb {
+        width: 11px;
+        height: 11px;
+        background: white;
+        border-radius: 50%;
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+      }
+
+      /* Details tab */
+      .dt-body {
+        padding: 20px 16px 16px;
+        height: 100%;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+      }
+      .dt-health-header {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        padding-bottom: 12px;
+        margin-bottom: 4px;
+        position: relative;
+      }
+      .dt-health-header::after {
+        content: "";
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 2.5px;
+        background: rgba(0, 0, 0, 0.06);
+        border-radius: 2px;
+      }
+      .dt-health-bar {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 93%;
+        height: 2.5px;
+        background: rgba(0, 0, 0, 0.36);
+        border-radius: 2px;
+        z-index: 1;
+      }
+      .dt-health-pct {
+        display: flex;
+        align-items: baseline;
+        gap: 2px;
+      }
+      .dt-health-num {
+        font-size: 38px;
+        font-weight: 600;
+        letter-spacing: -2px;
+        color: rgba(0, 0, 0, 0.86);
+        line-height: 1;
+      }
+      .dt-health-unit {
+        font-size: 16px;
+        font-weight: 300;
+        color: rgba(0, 0, 0, 0.22);
+        margin-bottom: 4px;
+      }
+      .dt-health-label {
+        text-align: right;
+      }
+      .dt-health-label-top {
+        font-size: 10px;
+        color: rgba(0, 0, 0, 0.3);
+        display: block;
+      }
+      .dt-health-label-val {
+        font-size: 11px;
+        font-weight: 500;
+        color: rgba(0, 0, 0, 0.55);
+        display: block;
+        margin-top: 2px;
+      }
+      .dt-rows {
+        display: flex;
+        flex-direction: column;
+        margin-top: 10px;
+        flex: 1;
+      }
+      .dt-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 7px 0;
+        border-bottom: 0.5px solid rgba(0, 0, 0, 0.05);
+      }
+      .dt-row-label {
+        font-size: 12px;
+        color: rgba(0, 0, 0, 0.36);
+      }
+      .dt-row-val {
+        font-size: 12px;
+        font-weight: 500;
+        color: rgba(0, 0, 0, 0.84);
+      }
+
+      /* Settings tab */
+      .st-body {
+        padding: 20px 16px 12px;
+        height: 100%;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        overflow: hidden;
+      }
+      .st-modes {
+        display: flex;
+        gap: 7px;
+      }
+      .st-mode-btn {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 5px;
+        padding: 12px 5px;
+        border-radius: 12px;
+        border: 1px solid transparent;
+        cursor: default;
+      }
+      .st-mode-btn.active {
+        background: rgba(0, 0, 0, 0.06);
+        border-color: rgba(0, 0, 0, 0.1);
+      }
+      .st-mode-btn:not(.active) {
+        background: rgba(0, 0, 0, 0.03);
+      }
+      .st-mode-icon {
+        width: 18px;
+        height: 18px;
+        opacity: 0.8;
+      }
+      .st-mode-btn:not(.active) .st-mode-icon {
+        opacity: 0.24;
+      }
+      .st-mode-name {
+        font-size: 11px;
+        font-weight: 600;
+        color: rgba(0, 0, 0, 0.8);
+      }
+      .st-mode-btn:not(.active) .st-mode-name {
+        font-weight: 400;
+        color: rgba(0, 0, 0, 0.26);
+      }
+      .st-mode-pct {
+        font-size: 10px;
+        color: rgba(0, 0, 0, 0.4);
+      }
+      .st-mode-btn:not(.active) .st-mode-pct {
+        color: rgba(0, 0, 0, 0.16);
+      }
+      .st-limit {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .st-limit-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+      }
+      .st-limit-num-row {
+        display: flex;
+        align-items: baseline;
+        gap: 2px;
+      }
+      .st-limit-num {
+        font-size: 30px;
+        font-weight: 600;
+        letter-spacing: -1.5px;
+        color: rgba(0, 0, 0, 0.85);
+        line-height: 1;
+      }
+      .st-limit-unit {
+        font-size: 13px;
+        font-weight: 300;
+        color: rgba(0, 0, 0, 0.26);
+      }
+      .st-apply-btn {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 11px;
+        border-radius: 999px;
+        background: rgba(0, 0, 0, 0.8);
+        font-size: 11px;
+        font-weight: 500;
+        color: white;
+        cursor: default;
+      }
+      .st-apply-btn svg {
+        width: 8px;
+        height: 8px;
+      }
+      .st-slider-track {
+        height: 3px;
+        background: rgba(0, 0, 0, 0.07);
+        border-radius: 2px;
+        position: relative;
+      }
+      .st-slider-fill {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 60%;
+        height: 3px;
+        background: rgba(0, 0, 0, 0.55);
+        border-radius: 2px;
+      }
+      .st-slider-thumb {
+        position: absolute;
+        top: 50%;
+        left: 60%;
+        transform: translate(-50%, -50%);
+        width: 14px;
+        height: 14px;
+        background: white;
+        border-radius: 50%;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+      }
+      .st-chips {
+        display: flex;
+        gap: 4px;
+      }
+      .st-chip {
+        padding: 3px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 500;
+        background: rgba(0, 0, 0, 0.04);
+        color: rgba(0, 0, 0, 0.3);
+        cursor: default;
+      }
+      .st-chip.active {
+        background: rgba(0, 0, 0, 0.08);
+        color: rgba(0, 0, 0, 0.76);
+      }
+      .st-divider {
+        height: 0.5px;
+        background: rgba(0, 0, 0, 0.05);
+      }
+      .st-pref-group {
+        display: flex;
+        flex-direction: column;
+        background: rgba(0, 0, 0, 0.04);
+        border-radius: 11px;
+        overflow: hidden;
+      }
+      .st-pref-row {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 7px 11px;
+        position: relative;
+      }
+      .st-pref-row + .st-pref-row::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 36px;
+        right: 0;
+        height: 0.5px;
+        background: rgba(0, 0, 0, 0.05);
+      }
+      .st-pref-icon {
+        width: 16px;
+        height: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      .st-pref-icon svg {
+        width: 11px;
+        height: 11px;
+        opacity: 0.3;
+      }
+      .st-pref-label {
+        font-size: 11px;
+        color: rgba(0, 0, 0, 0.65);
+        flex: 1;
+      }
+      .mock-toggle-off {
+        width: 26px;
+        height: 15px;
+        background: rgba(0, 0, 0, 0.1);
+        border-radius: 8px;
+        position: relative;
+        flex-shrink: 0;
+      }
+      .mock-toggle-off-thumb {
+        width: 11px;
+        height: 11px;
+        background: white;
+        border-radius: 50%;
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+      }
+
+      /* Tab panel switching */
+      .app-tab-panel {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.18s ease;
+      }
+      .app-tab-panel.active {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      /* ── SECTION SHELL ───────────────────────────────────── */
+      section {
+        padding: 96px 0;
+      }
+
+      /* ── HOW IT WORKS ────────────────────────────────────── */
+      #how {
+        background: var(--bg);
+      }
+      .section-header {
+        text-align: center;
+        max-width: 600px;
+        margin: 0 auto 60px;
+      }
+      .section-eyebrow {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        color: var(--text-tertiary);
+        margin-bottom: 14px;
+        text-transform: uppercase;
+      }
+      .section-header h2 {
+        margin-bottom: 14px;
+      }
+      .section-header p {
+        font-size: 17px;
+        color: var(--text-tertiary);
+      }
+
+      .bento-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+      }
+      .how-card {
+        background: var(--surface);
+        padding: 32px 28px;
+        border-radius: var(--r-xl);
+      }
+      .how-num {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        color: var(--text-tertiary);
+        text-transform: uppercase;
+        margin-bottom: 20px;
+      }
+      .how-card h3 {
+        font-size: 20px;
+        margin-bottom: 10px;
+        color: var(--text-secondary);
+      }
+      .how-card p {
+        font-size: 14px;
+        line-height: 1.65;
+      }
+
+      /* ── FEATURES ────────────────────────────────────────── */
+      #features {
+        background: var(--bg);
+      }
+      .feature-card {
+        background: var(--surface);
+        padding: 32px 28px;
+        border-radius: var(--r-xl);
+        text-align: left;
+      }
+      .feature-icon {
+        width: 44px;
+        height: 44px;
+        background: var(--surface-2);
+        border-radius: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 18px;
+      }
+      .feature-icon svg {
+        width: 20px;
+        height: 20px;
+        stroke: var(--text-primary);
+        stroke-width: 1.75;
+      }
+      .feature-card h3 {
+        font-size: 20px;
+        margin-bottom: 8px;
+        color: var(--text-secondary);
+      }
+      .feature-card p {
+        font-size: 14px;
+        line-height: 1.65;
+      }
+
+      /* ── STATS BAND ──────────────────────────────────────── */
+      .stats-band {
+        background: var(--surface);
+        border-radius: var(--r-xl);
+        padding: 0;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        margin-bottom: 16px;
+        overflow: hidden;
+      }
+      .stat-item {
+        padding: 36px 32px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        border-right: 1px solid rgba(0, 0, 0, 0.05);
+      }
+      .stat-item:last-child {
+        border-right: none;
+      }
+      .stat-big-num {
+        font-family: "Noto Sans", sans-serif;
+        font-size: 52px;
+        font-weight: 700;
+        font-style: normal;
+        letter-spacing: -0.04em;
+        line-height: 1;
+        color: var(--text-primary);
+      }
+      .stat-item-label {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--text-secondary);
+        letter-spacing: -0.015em;
+      }
+      .stat-item-sub {
+        font-size: 13px;
+        color: var(--text-tertiary);
+      }
+
+      /* ── TECHNICAL ───────────────────────────────────────── */
+      #technical {
+        background: var(--bg);
+      }
+      .tech-layout {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 60px;
+        align-items: start;
+      }
+      .tech-content h2 {
+        margin-bottom: 18px;
+      }
+      .tech-content p {
+        margin-bottom: 20px;
+      }
+      .smc-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      .smc-table th {
+        text-align: left;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+        border-bottom: 1px solid var(--surface-3);
+        padding: 0 0 8px;
+      }
+      .smc-table td {
+        padding: 9px 0;
+        border-bottom: 1px solid var(--border);
+        color: var(--text-secondary);
+        vertical-align: top;
+      }
+      .smc-table td:first-child {
+        font-family: "SF Mono", "JetBrains Mono", monospace;
+        font-weight: 600;
+        font-size: 13px;
+        color: var(--text-primary);
+        padding-right: 20px;
+        white-space: nowrap;
+      }
+      .tech-points {
+        list-style: none;
+        margin-top: 22px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .tech-points li {
+        display: flex;
+        gap: 10px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        line-height: 1.55;
+      }
+      .tech-points li::before {
+        content: "→";
+        color: var(--text-tertiary);
+        flex-shrink: 0;
+        margin-top: 1px;
+      }
+
+      /* ── INSTALL ─────────────────────────────────────────── */
+      #install {
+        background: var(--bg);
+        text-align: center;
+      }
+      .install-layout {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        text-align: left;
+      }
+      .install-card {
+        background: var(--surface);
+        padding: 36px 32px;
+        border-radius: var(--r-xl);
+      }
+      .install-card h3 {
+        font-size: 22px;
+        margin-bottom: 8px;
+        color: var(--text-secondary);
+      }
+      .install-card > p {
+        font-size: 14px;
+        margin-bottom: 24px;
+      }
+      .install-steps {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .install-step {
+        display: flex;
+        gap: 14px;
+        align-items: flex-start;
+      }
+      .step-num {
+        width: 22px;
+        height: 22px;
+        background: var(--surface-2);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        flex-shrink: 0;
+        margin-top: 2px;
+      }
+      .step-text {
+        font-size: 14px;
+        color: var(--text-secondary);
+        line-height: 1.55;
+      }
+      .step-text strong {
+        color: var(--text-primary);
+        font-weight: 500;
+      }
+      .code-block {
+        background: var(--surface-2);
+        border-radius: var(--r-md);
+        padding: 18px 20px;
+        margin-top: 18px;
+      }
+      .code-block pre {
+        font-family: "SF Mono", "JetBrains Mono", monospace;
+        font-size: 12.5px;
+        color: var(--text-secondary);
+        line-height: 1.8;
+        white-space: pre-wrap;
+      }
+      .install-cta {
+        margin-top: 26px;
+      }
+
+      /* ── CONTRIBUTE ──────────────────────────────────────── */
+      #contribute {
+        background: var(--bg);
+      }
+      .contribute-layout {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 60px;
+        align-items: start;
+      }
+      .contribute-text h2 {
+        margin-bottom: 16px;
+      }
+      .contribute-text p {
+        margin-bottom: 18px;
+      }
+      .contribute-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 28px;
+      }
+      .welcome-list {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .welcome-list li {
+        display: flex;
+        gap: 14px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        line-height: 1.55;
+        padding: 16px 18px;
+        background: var(--surface);
+        border-radius: var(--r-lg);
+      }
+      .welcome-list li span.icon {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .welcome-list li span.icon svg {
+        width: 16px;
+        height: 16px;
+        stroke: var(--text-primary);
+        stroke-width: 1.75;
+      }
+      .ground-rules {
+        margin-top: 16px;
+        padding: 20px;
+        background: var(--surface);
+        border-radius: var(--r-lg);
+      }
+      .ground-rules h3 {
+        font-size: 11px;
+        color: var(--text-tertiary);
+        font-weight: 700;
+        margin-bottom: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .ground-rules ul {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .ground-rules li {
+        font-size: 13px;
+        color: var(--text-secondary);
+        padding-left: 14px;
+        position: relative;
+      }
+      .ground-rules li::before {
+        content: "-";
+        position: absolute;
+        left: 0;
+        color: var(--text-tertiary);
+      }
+
+      /* ── FOOTER ──────────────────────────────────────────── */
+      footer {
+        border-top: 1px solid var(--border);
+        padding: 40px 0;
+        background: var(--bg);
+      }
+      .footer-inner {
+        max-width: 1040px;
+        margin: 0 auto;
+        padding: 0 40px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        flex-wrap: wrap;
+      }
+      .footer-left {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .footer-brand {
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        color: var(--text-primary);
+      }
+      .footer-sub {
+        font-size: 12px;
+        color: var(--text-tertiary);
+      }
+      .footer-links {
+        display: flex;
+        gap: 20px;
+        list-style: none;
+        flex-wrap: wrap;
+      }
+      .footer-links a {
+        font-size: 13px;
+        color: var(--text-tertiary);
+        text-decoration: none;
+        transition: color 0.15s;
+      }
+      .footer-links a:hover {
+        color: var(--text-primary);
+      }
+
+      code {
+        font-family: "SF Mono", "JetBrains Mono", monospace;
+        font-size: 11.5px;
+        background: var(--surface-3);
+        padding: 1px 5px;
+        border-radius: 5px;
+        color: var(--text-primary);
+      }
+
+      /* ── RESPONSIVE ──────────────────────────────────────── */
+      @media (max-width: 768px) {
+        .container {
+          padding: 0 24px;
+        }
+        .nav-inner {
+          padding: 0 24px;
+        }
+        .footer-inner {
+          padding: 0 24px;
+        }
+        section {
+          padding: 72px 0;
+        }
+        .bento-grid,
+        .hero-bento,
+        .tech-layout,
+        .install-layout,
+        .contribute-layout {
+          grid-template-columns: 1fr;
+        }
+        .stats-band {
+          grid-template-columns: 1fr;
+        }
+        .stat-item {
+          border-right: none;
+          border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+        }
+        .stat-item:last-child {
+          border-bottom: none;
+        }
+        .bento-card.large,
+        .app-window.large {
+          grid-column: span 1;
+        }
+        .nav-links {
+          display: none;
+        }
+        h1 {
+          letter-spacing: -0.05em;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ── NAV ─────────────────────────────────────────────── -->
+    <nav>
+      <div class="nav-inner">
+        <a class="nav-logo" href="#">Batty</a>
+        <ul class="nav-links">
+          <li><a href="#features">Features</a></li>
+          <li><a href="#technical">How it works</a></li>
+          <li><a href="#install">Install</a></li>
+          <li><a href="#contribute">Contribute</a></li>
+          <li>
+            <a
+              class="nav-cta"
+              href="https://github.com/aliadelelroby/Batty/releases"
+              >Download</a
+            >
+          </li>
+        </ul>
+      </div>
+    </nav>
+
+    <!-- ── HERO ────────────────────────────────────────────── -->
+    <section id="hero">
+      <div class="container">
+        <div class="hero-eyebrow">
+          <span class="hero-dot"></span>
+          Free &amp; open source · Apple Silicon
+        </div>
+        <h1 class="hero-headline">Battery health,<br />under control.</h1>
+        <p class="hero-sub">
+          Real hardware charge limits on Apple Silicon MacBooks. No polling, no
+          daemon, no subscription.
+        </p>
+        <div class="hero-actions">
+          <a
+            class="btn btn-primary"
+            href="https://github.com/aliadelelroby/Batty/releases"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            Download Batty
+          </a>
+          <a
+            class="btn btn-secondary"
+            href="https://github.com/aliadelelroby/Batty"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.39.6.11.82-.26.82-.57v-2c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.74.08-.73.08-.73 1.2.09 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.49 1 .11-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.17 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 013-.4c1.02.005 2.04.14 3 .4 2.28-1.55 3.29-1.23 3.29-1.23.66 1.65.25 2.87.12 3.17.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.21.69.82.57C20.56 21.8 24 17.3 24 12c0-6.63-5.37-12-12-12z"
+              />
+            </svg>
+            View on GitHub
+          </a>
+        </div>
+        <p class="hero-note">
+          macOS 13+ · Apple Silicon (M1 – M4) · No code signing required
+        </p>
+
+        <!-- Bento grid with app mockup + stats -->
+        <div class="hero-bento">
+          <!-- App mockup card (tall, spans 2 rows) -->
+          <div class="app-window tall" id="hero-app">
+            <div class="app-tab-content">
+              <!-- Panel 0: Overview -->
+              <div class="app-tab-panel active" id="hero-panel-0">
+                <div class="ov-body">
+                  <div class="ov-hero">
+                    <div class="ov-pct-block">
+                      <div class="ov-pct-line">
+                        <span class="ov-pct-num">73</span>
+                        <span class="ov-pct-unit">%</span>
+                      </div>
+                      <div class="ov-status">
+                        <svg
+                          class="ov-status-bolt"
+                          viewBox="0 0 24 24"
+                          fill="currentColor"
+                        >
+                          <path
+                            d="M13 2L4.5 13.5H11L10 22L19.5 10.5H13L13 2Z"
+                          />
+                        </svg>
+                        <span>1h 24m</span>
+                      </div>
+                    </div>
+                    <div class="ov-progress">
+                      <div class="ov-progress-track">
+                        <div class="ov-progress-ghost"></div>
+                        <div class="ov-progress-fill"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="ov-stats">
+                    <div class="ov-stat">
+                      <div class="ov-stat-val">29.1°C</div>
+                      <div class="ov-stat-lbl">Temp</div>
+                    </div>
+                    <div class="ov-stat-div"></div>
+                    <div class="ov-stat">
+                      <div class="ov-stat-val">93%</div>
+                      <div class="ov-stat-lbl">Health</div>
+                    </div>
+                    <div class="ov-stat-div"></div>
+                    <div class="ov-stat">
+                      <div class="ov-stat-val">79</div>
+                      <div class="ov-stat-lbl">Cycles</div>
+                    </div>
+                  </div>
+                  <div class="ov-limit">
+                    <svg
+                      class="ov-limit-icon"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                    >
+                      <path
+                        d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM12 17c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"
+                      />
+                    </svg>
+                    <span class="ov-limit-label">Limit 80%</span>
+                    <div class="mock-toggle">
+                      <div class="mock-toggle-thumb"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Panel 1: Details -->
+              <div class="app-tab-panel" id="hero-panel-1">
+                <div class="dt-body">
+                  <div class="dt-health-header">
+                    <div class="dt-health-pct">
+                      <span class="dt-health-num">93</span>
+                      <span class="dt-health-unit">%</span>
+                    </div>
+                    <div class="dt-health-label">
+                      <span class="dt-health-label-top">Battery Health</span>
+                      <span class="dt-health-label-val">Good</span>
+                    </div>
+                    <div class="dt-health-bar"></div>
+                  </div>
+                  <div class="dt-rows">
+                    <div class="dt-row">
+                      <span class="dt-row-label">Temperature</span
+                      ><span class="dt-row-val">29.1°C</span>
+                    </div>
+                    <div class="dt-row">
+                      <span class="dt-row-label">Voltage</span
+                      ><span class="dt-row-val">12.53V</span>
+                    </div>
+                    <div class="dt-row">
+                      <span class="dt-row-label">Current</span
+                      ><span class="dt-row-val">-1.8A</span>
+                    </div>
+                    <div class="dt-row">
+                      <span class="dt-row-label">Battery power</span
+                      ><span class="dt-row-val">22.6W</span>
+                    </div>
+                    <div class="dt-row">
+                      <span class="dt-row-label">Capacity</span
+                      ><span class="dt-row-val">7807 / 8249 mAh</span>
+                    </div>
+                    <div class="dt-row">
+                      <span class="dt-row-label">System load</span
+                      ><span class="dt-row-val">4.5W</span>
+                    </div>
+                    <div class="dt-row">
+                      <span class="dt-row-label">Adapter</span
+                      ><span class="dt-row-val">140W USB-C</span>
+                    </div>
+                    <div class="dt-row" style="border-bottom: none">
+                      <span class="dt-row-label">Cycles</span
+                      ><span class="dt-row-val">79</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Panel 2: Settings -->
+              <div class="app-tab-panel" id="hero-panel-2">
+                <div class="st-body">
+                  <div class="st-modes">
+                    <div class="st-mode-btn active">
+                      <svg
+                        class="st-mode-icon"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <rect x="2" y="3" width="20" height="14" rx="2" />
+                        <line x1="8" y1="21" x2="16" y2="21" />
+                        <line x1="12" y1="17" x2="12" y2="21" />
+                      </svg>
+                      <span class="st-mode-name">Desk</span>
+                      <span class="st-mode-pct">80%</span>
+                    </div>
+                    <div class="st-mode-btn">
+                      <svg
+                        class="st-mode-icon"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M20 7h-3a2 2 0 00-2 2v10" />
+                        <path d="M9 7H6a2 2 0 00-2 2v10" />
+                        <path d="M14 7V5a2 2 0 00-2-2h0a2 2 0 00-2 2v2" />
+                        <rect x="9" y="7" width="6" height="14" rx="1" />
+                      </svg>
+                      <span class="st-mode-name">On the Go</span>
+                      <span class="st-mode-pct">100%</span>
+                    </div>
+                    <div class="st-mode-btn">
+                      <svg
+                        class="st-mode-icon"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <circle cx="12" cy="12" r="3" />
+                        <path
+                          d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"
+                        />
+                      </svg>
+                      <span class="st-mode-name">Custom</span>
+                      <span class="st-mode-pct">—</span>
+                    </div>
+                  </div>
+                  <div class="st-limit">
+                    <div class="st-limit-header">
+                      <div class="st-limit-num-row">
+                        <span class="st-limit-num">80</span>
+                        <span class="st-limit-unit">%</span>
+                      </div>
+                      <div class="st-apply-btn">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2.5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                        Apply
+                      </div>
+                    </div>
+                    <div class="st-slider-track">
+                      <div class="st-slider-fill"></div>
+                      <div class="st-slider-thumb"></div>
+                    </div>
+                    <div class="st-chips">
+                      <div class="st-chip">60%</div>
+                      <div class="st-chip active">80%</div>
+                      <div class="st-chip">90%</div>
+                      <div class="st-chip">100%</div>
+                    </div>
+                  </div>
+                  <div class="st-divider"></div>
+                  <div class="st-pref-group">
+                    <div class="st-pref-row">
+                      <div class="st-pref-icon">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M18 20V10M12 20V4M6 20v-6" />
+                        </svg>
+                      </div>
+                      <span class="st-pref-label">Launch at Login</span>
+                      <div class="mock-toggle">
+                        <div class="mock-toggle-thumb"></div>
+                      </div>
+                    </div>
+                    <div class="st-pref-row">
+                      <div class="st-pref-icon">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <circle cx="12" cy="12" r="5" />
+                          <path
+                            d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"
+                          />
+                        </svg>
+                      </div>
+                      <span class="st-pref-label">Low Power Mode</span>
+                      <div class="mock-toggle-off">
+                        <div class="mock-toggle-off-thumb"></div>
+                      </div>
+                    </div>
+                    <div class="st-pref-row">
+                      <div class="st-pref-icon">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path
+                            d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2z"
+                          />
+                        </svg>
+                      </div>
+                      <span class="st-pref-label">Show % in Menu Bar</span>
+                      <div class="mock-toggle">
+                        <div class="mock-toggle-thumb"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab bar -->
+            <div class="app-tab-bar">
+              <div class="app-tab-bar-bg"></div>
+              <div class="app-tab-buttons" id="hero-tabs">
+                <div class="app-tab-btn active" data-tab="0">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <rect x="2" y="7" width="20" height="14" rx="2" />
+                    <path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2" />
+                    <line x1="12" y1="12" x2="12" y2="16" />
+                    <line x1="10" y1="14" x2="14" y2="14" />
+                  </svg>
+                </div>
+                <div class="app-tab-btn" data-tab="1">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <line x1="18" y1="20" x2="18" y2="10" />
+                    <line x1="12" y1="20" x2="12" y2="4" />
+                    <line x1="6" y1="20" x2="6" y2="14" />
+                  </svg>
+                </div>
+                <div class="app-tab-btn" data-tab="2">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <line x1="4" y1="6" x2="20" y2="6" />
+                    <line x1="8" y1="12" x2="20" y2="12" />
+                    <line x1="12" y1="18" x2="20" y2="18" />
+                    <circle cx="4" cy="12" r="1.5" />
+                    <circle cx="8" cy="18" r="1.5" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Top-right: stat card -->
+          <div class="bento-card" style="justify-content: space-between">
+            <div class="bento-stat-num">80%</div>
+            <div>
+              <div class="bento-label">Charge limit</div>
+              <div class="bento-sub-label">Hardware-enforced via SMC keys</div>
+            </div>
+          </div>
+
+          <!-- Middle-right: stat card -->
+          <div class="bento-card" style="justify-content: space-between">
+            <div class="bento-stat-num">0</div>
+            <div>
+              <div class="bento-label">Background daemons</div>
+              <div class="bento-sub-label">
+                No daemon, no polling, no subscription
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom row spanning 2: open source card -->
+          <div
+            class="bento-card large"
+            style="
+              flex-direction: row;
+              align-items: center;
+              justify-content: space-between;
+              gap: 24px;
+            "
+          >
+            <div>
+              <div class="bento-label">Free &amp; open source</div>
+              <div class="bento-sub-label" style="margin-top: 6px">
+                MIT license · Swift Package Manager · Zero external dependencies
+              </div>
+            </div>
+            <a
+              class="btn btn-primary"
+              href="https://github.com/aliadelelroby/Batty"
+              style="flex-shrink: 0"
+            >
+              View on GitHub
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── HOW IT WORKS ───────────────────────────────────── -->
+    <section id="how">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-eyebrow">How it works</span>
+          <h2>A growing collection<br />of features.</h2>
+        </div>
+        <div class="bento-grid">
+          <div class="how-card">
+            <div class="how-num">Step 01</div>
+            <h3>Write to SMC</h3>
+            <p>
+              Batty writes directly to the System Management Controller using
+              Apple-private <code>CH0C</code> and <code>ACLC</code> keys. This
+              is the same mechanism macOS Optimized Charging uses internally.
+            </p>
+          </div>
+          <div class="how-card">
+            <div class="how-num">Step 02</div>
+            <h3>Hardware stops charging</h3>
+            <p>
+              Once the key is set the battery controller enforces the limit in
+              firmware. The Mac stops accepting charge at exactly your target
+              percentage, even while sleeping.
+            </p>
+          </div>
+          <div class="how-card">
+            <div class="how-num">Step 03</div>
+            <h3>Persists across reboots</h3>
+            <p>
+              A single <code>sudoers</code> entry lets the app write SMC keys
+              without a daemon. No background process, no scheduled tasks. The
+              limit is retained by the hardware itself.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── FEATURES ───────────────────────────────────────── -->
+    <section id="features">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-eyebrow">Features</span>
+          <h2>Everything you need,<br />nothing you don't.</h2>
+          <p>Built for simplicity. Every feature earns its place.</p>
+        </div>
+
+        <!-- Stats band -->
+        <div class="stats-band">
+          <div class="stat-item">
+            <div class="stat-big-num">M1–M4</div>
+            <div class="stat-item-label">Full chip support</div>
+            <div class="stat-item-sub">All Apple Silicon generations</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-big-num">3</div>
+            <div class="stat-item-label">Charging modes</div>
+            <div class="stat-item-sub">Desk, On the Go, Custom</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-big-num">0</div>
+            <div class="stat-item-label">External dependencies</div>
+            <div class="stat-item-sub">Pure Swift, no packages</div>
+          </div>
+        </div>
+
+        <div class="bento-grid">
+          <div class="feature-card">
+            <div class="feature-icon">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+              >
+                <path
+                  d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"
+                />
+              </svg>
+            </div>
+            <h3>Real hardware limits</h3>
+            <p>
+              No software polling. SMC keys are set at the firmware level so
+              charging stops at your exact target, even while the lid is closed.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+              >
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+              </svg>
+            </div>
+            <h3>Live battery data</h3>
+            <p>
+              Temperature, voltage, current, capacity, cycle count, and adapter
+              wattage — all pulled from IOKit in real time.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+              >
+                <rect x="2" y="3" width="20" height="14" rx="2" />
+                <line x1="8" y1="21" x2="16" y2="21" />
+                <line x1="12" y1="17" x2="12" y2="21" />
+              </svg>
+            </div>
+            <h3>Charging profiles</h3>
+            <p>
+              Switch between Desk (80%), On the Go (100%), and a fully Custom
+              limit. One tap to apply — or set it and forget it.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 8v4l3 3" />
+              </svg>
+            </div>
+            <h3>No background process</h3>
+            <p>
+              A single sudoers rule is all that's needed. There's no daemon to
+              install, no helper process, and nothing running when you don't
+              need it.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+            </div>
+            <h3>No code signing required</h3>
+            <p>
+              Run ad-hoc or unsigned. No Apple Developer account, no
+              notarization, no entitlements. Just grant sudo permission once.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+              >
+                <polyline points="16 18 22 12 16 6" />
+                <polyline points="8 6 2 12 8 18" />
+              </svg>
+            </div>
+            <h3>Open source</h3>
+            <p>
+              MIT licensed. Read every line, audit the sudoers rule, build it
+              yourself. Transparent by design.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── TECHNICAL ──────────────────────────────────────── -->
+    <section id="technical">
+      <div class="container">
+        <div class="tech-layout">
+          <div class="tech-content">
+            <span class="section-eyebrow" style="text-align: left"
+              >Under the hood</span
+            >
+            <h2 style="margin-top: 12px">Writes directly<br />to SMC keys.</h2>
+            <p>
+              Apple Silicon exposes charging control through the System
+              Management Controller. Batty uses <code>SMCKit</code> to write
+              specific keys that instruct the battery controller to hold at your
+              chosen limit.
+            </p>
+            <p>
+              The limit persists in hardware — no polling loop required. When
+              you change it, Batty writes the new value and exits. The firmware
+              does the rest.
+            </p>
+            <ul class="tech-points">
+              <li>Uses the same mechanism as macOS Optimized Charging</li>
+              <li>
+                sudoers rule grants <code>smc</code> write without a full-daemon
+              </li>
+              <li>
+                Battery data read via IOKit <code>AppleSmartBattery</code>
+              </li>
+              <li>
+                Adapter detection via <code>AppleSmartBatteryManager</code>
+              </li>
+            </ul>
+          </div>
+          <div>
+            <table class="smc-table">
+              <thead>
+                <tr>
+                  <th>SMC Key</th>
+                  <th>Purpose</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>CH0C</td>
+                  <td>Disable / enable hardware charging</td>
+                </tr>
+                <tr>
+                  <td>ACLC</td>
+                  <td>Set charge limit percentage</td>
+                </tr>
+                <tr>
+                  <td>BCLM</td>
+                  <td>Battery charge level maximum</td>
+                </tr>
+                <tr>
+                  <td>B0FC</td>
+                  <td>Full-charge capacity (mAh)</td>
+                </tr>
+                <tr>
+                  <td>B0RM</td>
+                  <td>Remaining capacity (mAh)</td>
+                </tr>
+                <tr>
+                  <td>TB0T</td>
+                  <td>Battery temperature</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── INSTALL ────────────────────────────────────────── -->
+    <section id="install">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-eyebrow">Get started</span>
+          <h2>Up and running<br />in two minutes.</h2>
+        </div>
+        <div class="install-layout">
+          <div class="install-card">
+            <h3>Download the DMG</h3>
+            <p>Recommended for most users. No Terminal required.</p>
+            <ol class="install-steps">
+              <li class="install-step">
+                <div class="step-num">1</div>
+                <div class="step-text">
+                  Download <strong>Batty.dmg</strong> from the
+                  <a
+                    href="https://github.com/aliadelelroby/Batty/releases"
+                    style="color: var(--text-primary)"
+                    >Releases page</a
+                  >
+                </div>
+              </li>
+              <li class="install-step">
+                <div class="step-num">2</div>
+                <div class="step-text">
+                  Open the DMG and drag <strong>Batty</strong> to
+                  <strong>/Applications</strong>
+                </div>
+              </li>
+              <li class="install-step">
+                <div class="step-num">3</div>
+                <div class="step-text">
+                  Launch Batty. It appears in the menu bar and shows a one-time
+                  setup screen
+                </div>
+              </li>
+              <li class="install-step">
+                <div class="step-num">4</div>
+                <div class="step-text">
+                  Click <strong>Grant Permission</strong> and enter your admin
+                  password once
+                </div>
+              </li>
+              <li class="install-step">
+                <div class="step-num">5</div>
+                <div class="step-text">
+                  Open the menu bar icon → <strong>Settings</strong> → set your
+                  limit → tap <strong>Apply</strong>
+                </div>
+              </li>
+            </ol>
+            <div class="install-cta">
+              <a
+                class="btn btn-primary"
+                href="https://github.com/aliadelelroby/Batty/releases"
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                Download Batty.dmg
+              </a>
+            </div>
+          </div>
+
+          <div class="install-card">
+            <h3>Build from source</h3>
+            <p>For developers. Requires Xcode Command Line Tools only.</p>
+            <div class="code-block">
+              <pre>
+git clone https://github.com/aliadelelroby/Batty.git
+cd Batty
+bash install.sh</pre
+              >
+            </div>
+            <p
+              style="
+                font-size: 13px;
+                margin-top: 16px;
+                color: var(--text-secondary);
+              "
+            >
+              The installer builds a release binary, creates
+              <code>/Applications/Batty.app</code>, and handles the sudoers
+              setup in one step.
+            </p>
+
+            <div style="margin-top: 28px">
+              <h3
+                style="
+                  font-size: 18px;
+                  margin-bottom: 12px;
+                  color: var(--text-secondary);
+                "
+              >
+                Uninstall
+              </h3>
+              <div class="code-block">
+                <pre>
+sudo rm /etc/sudoers.d/batty
+sudo rm -rf /Applications/Batty.app</pre
+                >
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── CONTRIBUTE ─────────────────────────────────────── -->
+    <section id="contribute">
+      <div class="container">
+        <div class="contribute-layout">
+          <div class="contribute-text">
+            <span class="section-eyebrow">Open source</span>
+            <h2 style="margin-top: 12px">
+              Built in the open.<br />Contributions welcome.
+            </h2>
+            <p style="margin-top: 16px">
+              Batty is MIT-licensed, built with Swift Package Manager (no Xcode
+              project), and has zero external dependencies. The codebase is
+              small and approachable.
+            </p>
+            <p>
+              The focus is keeping it simple, fast, and reliable. If you want to
+              add something, open an issue first to discuss. We'd rather have
+              one excellent feature than five mediocre ones.
+            </p>
+            <div class="contribute-actions">
+              <a
+                class="btn btn-primary"
+                href="https://github.com/aliadelelroby/Batty"
+                >View on GitHub</a
+              >
+              <a
+                class="btn btn-secondary"
+                href="https://github.com/aliadelelroby/Batty/issues"
+                >Open an issue</a
+              >
+            </div>
+          </div>
+
+          <div>
+            <ul class="welcome-list">
+              <li>
+                <span class="icon"><svg data-lucide="bug"></svg></span>
+                <div>
+                  <strong
+                    style="
+                      display: block;
+                      font-size: 14px;
+                      font-weight: 500;
+                      color: var(--text-primary);
+                      margin-bottom: 2px;
+                    "
+                    >Bug fixes</strong
+                  >
+                  <span style="font-size: 13px; color: var(--text-secondary)"
+                    >Always welcome. Include macOS version, Mac model, and
+                    relevant <code>log show</code> output.</span
+                  >
+                </div>
+              </li>
+              <li>
+                <span class="icon"><svg data-lucide="monitor"></svg></span>
+                <div>
+                  <strong
+                    style="
+                      display: block;
+                      font-size: 14px;
+                      font-weight: 500;
+                      color: var(--text-primary);
+                      margin-bottom: 2px;
+                    "
+                    >Intel Mac support</strong
+                  >
+                  <span style="font-size: 13px; color: var(--text-secondary)"
+                    >Intel uses different SMC keys (<code>CH0C</code> for
+                    charging, <code>CH0J</code> for adapter).</span
+                  >
+                </div>
+              </li>
+              <li>
+                <span class="icon"><svg data-lucide="battery"></svg></span>
+                <div>
+                  <strong
+                    style="
+                      display: block;
+                      font-size: 14px;
+                      font-weight: 500;
+                      color: var(--text-primary);
+                      margin-bottom: 2px;
+                    "
+                    >Battery detail rows</strong
+                  >
+                  <span style="font-size: 13px; color: var(--text-secondary)"
+                    >Additional IOKit properties worth surfacing in the Details
+                    tab.</span
+                  >
+                </div>
+              </li>
+              <li>
+                <span class="icon"><svg data-lucide="timer"></svg></span>
+                <div>
+                  <strong
+                    style="
+                      display: block;
+                      font-size: 14px;
+                      font-weight: 500;
+                      color: var(--text-primary);
+                      margin-bottom: 2px;
+                    "
+                    >Time remaining accuracy</strong
+                  >
+                  <span style="font-size: 13px; color: var(--text-secondary)"
+                    >Improvements to the coulomb-counter based time
+                    estimation.</span
+                  >
+                </div>
+              </li>
+            </ul>
+
+            <div class="ground-rules">
+              <h3>Ground rules</h3>
+              <ul>
+                <li>SPM only, no Xcode project files</li>
+                <li>No external Swift packages</li>
+                <li>No code signing or entitlements required</li>
+                <li>
+                  Monochrome UI: <code>Color.primary</code> with opacity only,
+                  no accent colors
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── FOOTER ─────────────────────────────────────────── -->
+    <footer>
+      <div class="footer-inner">
+        <div class="footer-left">
+          <span class="footer-brand">Batty</span>
+          <span class="footer-sub">Free and open source · MIT License</span>
+        </div>
+        <ul class="footer-links">
+          <li><a href="https://github.com/aliadelelroby/Batty">GitHub</a></li>
+          <li>
+            <a href="https://github.com/aliadelelroby/Batty/releases"
+              >Releases</a
+            >
+          </li>
+          <li>
+            <a href="https://github.com/aliadelelroby/Batty/issues">Issues</a>
+          </li>
+          <li>
+            <a
+              href="https://github.com/aliadelelroby/Batty/blob/main/CONTRIBUTING.md"
+              >Contributing</a
+            >
+          </li>
+          <li>
+            <a href="https://github.com/aliadelelroby/Batty/blob/main/LICENSE"
+              >License</a
+            >
+          </li>
+        </ul>
+      </div>
+    </footer>
+
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script>
+      function initAppTabs(tabBarId, panelPrefix) {
+        var tabBar = document.getElementById(tabBarId);
+        if (!tabBar) return;
+        var tabs = tabBar.querySelectorAll(".app-tab-btn");
+        tabs.forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var idx = btn.getAttribute("data-tab");
+            tabs.forEach(function (t) {
+              t.classList.remove("active");
+            });
+            btn.classList.add("active");
+            for (var i = 0; i < 3; i++) {
+              var panel = document.getElementById(panelPrefix + i);
+              if (panel) panel.classList.remove("active");
+            }
+            var activePanel = document.getElementById(panelPrefix + idx);
+            if (activePanel) activePanel.classList.add("active");
+          });
+        });
+      }
+
+      initAppTabs("hero-tabs", "hero-panel-");
+      lucide.createIcons();
+    </script>
+  </body>
+</html>
