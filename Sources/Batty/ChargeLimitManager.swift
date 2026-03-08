@@ -42,6 +42,7 @@ final class ChargeLimitManager: ObservableObject {
     private let hysteresis = 5
     // Kept in sync by BatteryMonitor.applyChargeLimit()
     var limitMaxCharge: Int = 80
+    private var chargingDisabledByLimit = false
 
     // notify tokens
     private var notifyToken: Int32 = NOTIFY_TOKEN_INVALID
@@ -124,29 +125,32 @@ final class ChargeLimitManager: ObservableObject {
             notify_cancel(powerToken)
             powerToken = NOTIFY_TOKEN_INVALID
         }
+        chargingDisabledByLimit = false
     }
 
     func enforceLimit(_ maxCharge: Int, currentPct: Int, isCurrentlyCharging: Bool) {
         guard isSetupComplete, !isDischarging else { return }
         let minCharge = max(20, maxCharge - hysteresis)
         if currentPct >= maxCharge {
-            // At or above limit — turn off charging regardless of current state
-            if isCurrentlyCharging { disableCharging() }
+            disableCharging(force: chargingDisabledByLimit || !isCurrentlyCharging)
         } else if currentPct < minCharge {
-            // Below hysteresis floor — always re-enable charging
-            if !isCurrentlyCharging { enableCharging() }
+            enableCharging(force: chargingDisabledByLimit)
         }
         // Between minCharge and maxCharge: do nothing — respect whatever state charging is in.
         // (Charging was explicitly disabled at the limit; it stays off until hysteresis kicks in.)
     }
 
-    func enableCharging() {
+    func enableCharging(force: Bool = false) {
         guard isSetupComplete else { return }
+        guard force || chargingDisabledByLimit else { return }
+        chargingDisabledByLimit = false
         smcWrite(key: "CHTE", value: "00000000")
     }
 
-    func disableCharging() {
+    func disableCharging(force: Bool = false) {
         guard isSetupComplete else { return }
+        guard force || !chargingDisabledByLimit else { return }
+        chargingDisabledByLimit = true
         smcWrite(key: "CHTE", value: "01000000")
     }
 
@@ -163,11 +167,12 @@ final class ChargeLimitManager: ObservableObject {
         isDischarging = false
         guard isSetupComplete else { return }
         smcWrite(key: "CHIE", value: "00")          // re-enable adapter
-        enableCharging()
+        enableCharging(force: true)
     }
 
     func restoreDefaults() {
         guard isSetupComplete else { return }
+        chargingDisabledByLimit = false
         smcWrite(key: "CHIE", value: "00")
         smcWrite(key: "CHTE", value: "00000000")
     }
@@ -315,7 +320,6 @@ final class ChargeLimitManager: ObservableObject {
 
         // Read current % and charging state fresh from IOPowerSources
         var pct = 100
-        var isCurrentlyCharging = false
         var isConnected = false
         if let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
            let sources  = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef] {
@@ -323,7 +327,6 @@ final class ChargeLimitManager: ObservableObject {
                 if let info = IOPSGetPowerSourceDescription(snapshot, src)?.takeUnretainedValue() as? [String: Any],
                    let type = info[kIOPSTypeKey] as? String, type == kIOPSInternalBatteryType {
                     pct                = info[kIOPSCurrentCapacityKey] as? Int ?? 100
-                    isCurrentlyCharging = (info[kIOPSIsChargingKey] as? Bool) ?? false
                     isConnected        = (info[kIOPSPowerSourceStateKey] as? String) == kIOPSACPowerValue
                     break
                 }
@@ -334,13 +337,17 @@ final class ChargeLimitManager: ObservableObject {
             if pct <= dischargeTarget {
                 stopDischarge()
             } else {
-                disableCharging()
+                disableCharging(force: true)
                 smcWrite(key: "CHIE", value: "08")
                 startEnforcement()
             }
         } else {
-            // Immediately re-enforce in case battery charged past limit during sleep
-            enforceLimit(limitMaxCharge, currentPct: pct, isCurrentlyCharging: isCurrentlyCharging)
+            let minCharge = max(20, limitMaxCharge - hysteresis)
+            if pct >= limitMaxCharge || chargingDisabledByLimit {
+                disableCharging(force: true)
+            } else if pct < minCharge {
+                enableCharging(force: true)
+            }
             // Restart event loops (only needed when plugged in)
             if isConnected {
                 startEnforcement()

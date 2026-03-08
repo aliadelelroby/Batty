@@ -217,7 +217,7 @@ class BatteryMonitor: ObservableObject {
         chargeLimitStatus = "No limit"
         saveSettings()
         ChargeLimitManager.shared.stopEnforcement()
-        ChargeLimitManager.shared.enableCharging()
+        ChargeLimitManager.shared.enableCharging(force: true)
     }
 
     // MARK: - Discharge
